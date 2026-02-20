@@ -40,6 +40,19 @@ void RenderDevice::CreateResources(UINT w, UINT h) {
     device->CreateRenderTargetView(backBuffer, nullptr, &backBufferRTV);
     SAFE_RELEASE(backBuffer);
 
+    D3D11_TEXTURE2D_DESC depthDesc = {};
+    depthDesc.Width = w;
+    depthDesc.Height = h;
+    depthDesc.MipLevels = 1;
+    depthDesc.ArraySize = 1;
+    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Usage = D3D11_USAGE_DEFAULT;
+    depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+    device->CreateTexture2D(&depthDesc, nullptr, &depthStencilBuffer);
+    device->CreateDepthStencilView(depthStencilBuffer, nullptr, &depthStencilView);
+
     viewport.Width = (FLOAT)w;
     viewport.Height = (FLOAT)h;
     viewport.MinDepth = 0.0f;
@@ -50,14 +63,17 @@ void RenderDevice::Resize(UINT nw, UINT nh) {
     if (nw == 0 || nh == 0) return;
     context->OMSetRenderTargets(0, nullptr, nullptr);
     SAFE_RELEASE(backBufferRTV);
+    SAFE_RELEASE(depthStencilView);
+    SAFE_RELEASE(depthStencilBuffer);
     swapChain->ResizeBuffers(0, nw, nh, DXGI_FORMAT_UNKNOWN, 0);
     CreateResources(nw, nh);
 }
 
 void RenderDevice::PrepareFrame(const FLOAT clearColor[4]) {
     context->RSSetViewports(1, &viewport);
-    context->OMSetRenderTargets(1, &backBufferRTV, nullptr);
+    context->OMSetRenderTargets(1, &backBufferRTV, depthStencilView);
     context->ClearRenderTargetView(backBufferRTV, clearColor);
+    context->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 }
 
 void RenderDevice::EndFrame() {
@@ -65,6 +81,8 @@ void RenderDevice::EndFrame() {
 }
 
 void RenderDevice::Cleanup() {
+    SAFE_RELEASE(depthStencilView);
+    SAFE_RELEASE(depthStencilBuffer);
     SAFE_RELEASE(backBufferRTV);
     SAFE_RELEASE(swapChain);
     SAFE_RELEASE(context);

@@ -15,7 +15,7 @@ struct VS_OUTPUT {
 
 VS_OUTPUT main(VS_INPUT input) {
     VS_OUTPUT output;
-    output.Pos = float4(input.Pos, 1.0f); // Позиция уже в NDC
+    output.Pos = float4(input.Pos, 1.0f);
     output.Color = input.Color;
     return output;
 }
@@ -81,9 +81,9 @@ void TriangleComponent::Init(ID3D11Device* device) {
     HRESULT hr;
 
     Vertex vertices[] = {
-        { {-0.5f,  0.5f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
-        { { 0.5f,  0.5f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f} },
-        { { 0.0f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f} }
+        { { 0.7f,  0.9f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
+        { { 0.9f,  0.7f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f} },
+        { { 0.5f,  0.7f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f} } 
     };
 
     D3D11_BUFFER_DESC bd = {};

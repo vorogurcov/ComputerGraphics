@@ -127,11 +127,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="cube_component.cpp" />
     <ClCompile Include="render_device.cpp" />
     <ClCompile Include="src.cpp" />
     <ClCompile Include="triangle_component.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="cube_component.h" />
     <ClInclude Include="render_device.h" />
     <ClInclude Include="triangle_component.h" />
     <ClInclude Include="utils.h" />

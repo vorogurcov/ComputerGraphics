@@ -10,6 +10,10 @@ struct RenderDevice {
     ID3D11DeviceContext* context = nullptr;
     IDXGISwapChain* swapChain = nullptr;
     ID3D11RenderTargetView* backBufferRTV = nullptr;
+
+    ID3D11Texture2D* depthStencilBuffer = nullptr;
+    ID3D11DepthStencilView* depthStencilView = nullptr;
+
     D3D11_VIEWPORT viewport = {};
 
     UINT width = 1280;
