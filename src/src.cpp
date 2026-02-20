@@ -34,7 +34,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                       LoadCursor(NULL, IDC_ARROW), NULL, NULL, NULL, L"DX11_Lab", NULL };
     RegisterClassEx(&wc);
 
-    HWND hWnd = CreateWindow(L"DX11_Lab", L"Фролов Иван Lab3", WS_OVERLAPPEDWINDOW,
+    HWND hWnd = CreateWindow(L"DX11_Lab", L"Frolov Ivan Lab3", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 1280, 720, NULL, NULL, hInst, NULL);
 
     g_rd = new RenderDevice();
