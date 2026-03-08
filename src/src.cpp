@@ -1,6 +1,7 @@
 #include "RENDER_DEVICE.H"
 #include "TRIANGLE_COMPONENT.H" 
 #include "CUBE_COMPONENT.H"
+#include "SKYBOX_COMPONENT.H"
 #include <windows.h>
 
 #pragma comment(lib, "d3d11.lib")
@@ -9,6 +10,7 @@
 RenderDevice* g_rd = nullptr;
 TriangleComponent* g_tri = nullptr;
 CubeComponent* g_cube = nullptr;
+SkyboxComponent* g_sky = nullptr;
 
 float g_camPitch = 0.0f;
 float g_camYaw = 0.0f;
@@ -46,6 +48,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     g_cube = new CubeComponent();
     g_cube->Init(g_rd->device);
 
+    g_sky = new SkyboxComponent();
+    g_sky->Init(g_rd->device);
+
     ShowWindow(hWnd, nShow);
 
     MSG msg = {};
@@ -63,6 +68,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
             g_rd->PrepareFrame(color);
 
+            g_sky->Render(g_rd->context, aspectRatio, g_camPitch, g_camYaw);
             g_tri->Render(g_rd->context);
             g_cube->Render(g_rd->context, time, aspectRatio, g_camPitch, g_camYaw);
 
@@ -72,10 +78,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
     g_cube->Cleanup();
     g_tri->Cleanup();
+    g_sky->Cleanup();
     g_rd->Cleanup();
 
     delete g_cube;
     delete g_tri;
+    delete g_sky;
     delete g_rd;
 
     return (int)msg.wParam;
