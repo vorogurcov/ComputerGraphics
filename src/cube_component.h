@@ -8,6 +8,7 @@
 struct CubeVertex {
     float Pos[3];
     float Color[4];
+    float UV[2];
 };
 
 struct CubeModelBuffer {
@@ -27,6 +28,10 @@ struct CubeComponent {
 
     ID3D11Buffer* mBuffer = nullptr;
     ID3D11Buffer* vpBuffer = nullptr;
+
+    ID3D11Texture2D* colorTexture = nullptr;
+    ID3D11ShaderResourceView* colorTextureSRV = nullptr;
+    ID3D11SamplerState* colorSampler = nullptr;
 
     void Init(ID3D11Device* device);
     void Render(ID3D11DeviceContext* context, float time, float aspectRatio, float camPitch, float camYaw);
