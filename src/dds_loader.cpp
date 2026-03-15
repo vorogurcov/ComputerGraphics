@@ -29,12 +29,12 @@ namespace {
 
     constexpr uint32_t DDSCAPS2_CUBEMAP = 0x00000200u;
     constexpr uint32_t DDSCAPS2_CUBEMAP_ALLFACES =
-        0x00000400u | // POSITIVEX
-        0x00000800u | // NEGATIVEX
-        0x00001000u | // POSITIVEY
-        0x00002000u | // NEGATIVEY
-        0x00004000u | // POSITIVEZ
-        0x00008000u;  // NEGATIVEZ
+        0x00000400u |
+        0x00000800u |
+        0x00001000u |
+        0x00002000u |
+        0x00004000u |
+        0x00008000u;
 
     constexpr uint32_t DDS_RESOURCE_MISC_TEXTURECUBE = 0x4u;
 
@@ -126,8 +126,6 @@ namespace {
         if ((pf.flags & DDPF_RGB) == 0) return false;
         if (pf.RGBBitCount != 32) return false;
 
-        // Common legacy layouts (Windows DDS): BGRA/RGBA variations.
-        // Classic RGBA8: R=0x00ff0000, G=0x0000ff00, B=0x000000ff, A=0xff000000
         const bool hasAlpha = (pf.flags & DDPF_ALPHAPIXELS) != 0;
         if (pf.RBitMask == 0x00ff0000u &&
             pf.GBitMask == 0x0000ff00u &&
@@ -137,7 +135,6 @@ namespace {
             return true;
         }
 
-        // BGRA8: B=0x00ff0000, G=0x0000ff00, R=0x000000ff, A=0xff000000
         if (pf.BBitMask == 0x00ff0000u &&
             pf.GBitMask == 0x0000ff00u &&
             pf.RBitMask == 0x000000ffu &&

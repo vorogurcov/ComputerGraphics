@@ -2,7 +2,11 @@
 #include "TRIANGLE_COMPONENT.H" 
 #include "CUBE_COMPONENT.H"
 #include "SKYBOX_COMPONENT.H"
+#include "transparent_quad_component.h"
 #include <windows.h>
+#include <DirectXMath.h>
+#include <algorithm>
+#include <vector>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -11,6 +15,7 @@ RenderDevice* g_rd = nullptr;
 TriangleComponent* g_tri = nullptr;
 CubeComponent* g_cube = nullptr;
 SkyboxComponent* g_sky = nullptr;
+TransparentQuadComponent* g_transparentQuad = nullptr;
 
 float g_camPitch = 0.0f;
 float g_camYaw = 0.0f;
@@ -51,6 +56,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     g_sky = new SkyboxComponent();
     g_sky->Init(g_rd->device);
 
+    g_transparentQuad = new TransparentQuadComponent();
+    g_transparentQuad->Init(g_rd->device);
+
     ShowWindow(hWnd, nShow);
 
     MSG msg = {};
@@ -68,19 +76,94 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
             g_rd->PrepareFrame(color);
 
+            {
+                using namespace DirectX;
+                XMMATRIX modelCubeA =
+                    XMMatrixRotationAxis(XMVectorSet(1.0f, 1.0f, 0.0f, 0.0f), time) *
+                    XMMatrixTranslation(-0.45f, 0.0f, 0.1f);
+                XMMATRIX modelCubeB =
+                    XMMatrixScaling(0.72f, 0.72f, 0.72f) *
+                    XMMatrixRotationY(-time * 0.35f) *
+                    XMMatrixTranslation(0.55f, 0.12f, 0.45f);
+
+                g_cube->RenderWithModel(g_rd->context, modelCubeA, aspectRatio, g_camPitch, g_camYaw);
+                g_cube->RenderWithModel(g_rd->context, modelCubeB, aspectRatio, g_camPitch, g_camYaw);
+            }
+
             g_sky->Render(g_rd->context, aspectRatio, g_camPitch, g_camYaw);
-            g_tri->Render(g_rd->context);
-            g_cube->Render(g_rd->context, time, aspectRatio, g_camPitch, g_camYaw);
+
+            {
+                using namespace DirectX;
+                struct TransparentInstance {
+                    XMFLOAT4X4 model;
+                    float farthestPointDistance;
+                };
+
+                const XMVECTOR camPos = XMVectorSet(0.0f, 0.0f, -3.0f, 1.0f);
+                const XMVECTOR localCorners[4] = {
+                    XMVectorSet(-0.5f, -0.5f, 0.0f, 1.0f),
+                    XMVectorSet( 0.5f, -0.5f, 0.0f, 1.0f),
+                    XMVectorSet( 0.5f,  0.5f, 0.0f, 1.0f),
+                    XMVectorSet(-0.5f,  0.5f, 0.0f, 1.0f),
+                };
+
+                auto computeFarthestDistance = [&](const XMMATRIX& model) -> float {
+                    float d = 0.0f;
+                    for (int i = 0; i < 4; ++i) {
+                        XMVECTOR worldCorner = XMVector3TransformCoord(localCorners[i], model);
+                        float dist = XMVectorGetX(XMVector3Length(XMVectorSubtract(worldCorner, camPos)));
+                        d = (dist > d) ? dist : d;
+                    }
+                    return d;
+                };
+
+                std::vector<TransparentInstance> transparentInstances;
+                transparentInstances.reserve(2);
+
+                {
+                    XMMATRIX m = XMMatrixScaling(1.55f, 1.55f, 1.55f) * XMMatrixRotationY(time * 0.2f) * XMMatrixTranslation(0.0f, 0.0f, -0.25f);
+                    TransparentInstance inst = {};
+                    XMStoreFloat4x4(&inst.model, m);
+                    inst.farthestPointDistance = computeFarthestDistance(m);
+                    transparentInstances.push_back(inst);
+                }
+                {
+                    XMMATRIX m = XMMatrixScaling(1.15f, 1.15f, 1.15f) * XMMatrixRotationY(-time * 0.27f) * XMMatrixTranslation(0.35f, -0.2f, 0.8f);
+                    TransparentInstance inst = {};
+                    XMStoreFloat4x4(&inst.model, m);
+                    inst.farthestPointDistance = computeFarthestDistance(m);
+                    transparentInstances.push_back(inst);
+                }
+
+                std::sort(transparentInstances.begin(), transparentInstances.end(),
+                    [](const TransparentInstance& a, const TransparentInstance& b) {
+                        return a.farthestPointDistance > b.farthestPointDistance;
+                    });
+
+                FLOAT blendFactor[4] = { 1, 1, 1, 1 };
+                g_rd->context->OMSetBlendState(g_rd->blendStateAlpha, blendFactor, 0xFFFFFFFF);
+                g_rd->context->OMSetDepthStencilState(g_rd->transparentDepthState, 0);
+
+                for (const TransparentInstance& inst : transparentInstances) {
+                    DirectX::XMMATRIX model = DirectX::XMLoadFloat4x4(&inst.model);
+                    g_transparentQuad->RenderWithModel(g_rd->context, model, aspectRatio, g_camPitch, g_camYaw);
+                }
+
+                g_rd->context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+                g_rd->context->OMSetDepthStencilState(g_rd->opaqueDepthState, 0);
+            }
 
             g_rd->EndFrame();
         }
     }
 
+    g_transparentQuad->Cleanup();
     g_cube->Cleanup();
     g_tri->Cleanup();
     g_sky->Cleanup();
     g_rd->Cleanup();
 
+    delete g_transparentQuad;
     delete g_cube;
     delete g_tri;
     delete g_sky;

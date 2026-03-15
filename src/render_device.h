@@ -13,6 +13,9 @@ struct RenderDevice {
 
     ID3D11Texture2D* depthStencilBuffer = nullptr;
     ID3D11DepthStencilView* depthStencilView = nullptr;
+    ID3D11DepthStencilState* opaqueDepthState = nullptr;
+    ID3D11DepthStencilState* transparentDepthState = nullptr;
+    ID3D11BlendState* blendStateAlpha = nullptr;
 
     D3D11_VIEWPORT viewport = {};
 

@@ -26,9 +26,7 @@ VS_OUTPUT main(VS_INPUT input) {
 
     float3 worldPos = input.Pos + camPos.xyz;
     float4 clipPos = mul(vp, float4(worldPos, 1.0f));
-
-    clipPos.z = clipPos.w;
-
+    clipPos.z = 0.0f;
     output.Pos = clipPos;
     output.LocalDir = input.Pos;
     return output;
@@ -98,7 +96,7 @@ void SkyboxComponent::CreatePipelineStates(ID3D11Device* device) {
     D3D11_DEPTH_STENCIL_DESC dsd = {};
     dsd.DepthEnable = TRUE;
     dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-    dsd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    dsd.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
     hr = device->CreateDepthStencilState(&dsd, &depthState);
     assert(SUCCEEDED(hr));
 
@@ -136,8 +134,7 @@ void SkyboxComponent::LoadCubemapDDS(ID3D11Device* device) {
         if (ok && !img.isCubemap) OutputDebugStringA("Skybox DDS is not a cubemap (need DDS cubemap).\n");
         if (ok && img.isCubemap && img.arraySize != 6) OutputDebugStringA("Skybox DDS: expected exactly 6 faces.\n");
 
-        // Fallback: 1x1 cubemap (все грани голубые), чтобы фон отличался от куба.
-        const uint32_t blue = 0xffff0000u; // R8G8B8A8: B=1,G=0,R=0,A=1
+        const uint32_t blue = 0xffff0000u;
         D3D11_TEXTURE2D_DESC desc = {};
         desc.Width = 1;
         desc.Height = 1;
@@ -302,7 +299,9 @@ void SkyboxComponent::Render(ID3D11DeviceContext* context, float aspectRatio, fl
         DirectX::XMVECTOR focus = DirectX::XMVectorAdd(cameraPos, forward);
 
         DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
-        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, 0.1f, 100.0f);
+        const float nearZ = 0.1f;
+        const float farZ = 100.0f;
+        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, farZ, nearZ);
         sb->vp = DirectX::XMMatrixMultiply(v, p);
 
         DirectX::XMFLOAT4 cp;

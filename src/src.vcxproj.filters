@@ -33,6 +33,9 @@
     <ClCompile Include="skybox_component.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="transparent_quad_component.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="render_device.h">
@@ -51,6 +54,9 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="skybox_component.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="transparent_quad_component.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
