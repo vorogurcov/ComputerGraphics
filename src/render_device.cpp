@@ -45,13 +45,42 @@ void RenderDevice::CreateResources(UINT w, UINT h) {
     depthDesc.Height = h;
     depthDesc.MipLevels = 1;
     depthDesc.ArraySize = 1;
-    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.Format = DXGI_FORMAT_D32_FLOAT;
     depthDesc.SampleDesc.Count = 1;
     depthDesc.Usage = D3D11_USAGE_DEFAULT;
     depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 
     device->CreateTexture2D(&depthDesc, nullptr, &depthStencilBuffer);
     device->CreateDepthStencilView(depthStencilBuffer, nullptr, &depthStencilView);
+
+    if (!opaqueDepthState) {
+        D3D11_DEPTH_STENCIL_DESC dsd = {};
+        dsd.DepthEnable = TRUE;
+        dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        dsd.DepthFunc = D3D11_COMPARISON_GREATER;
+        dsd.StencilEnable = FALSE;
+        device->CreateDepthStencilState(&dsd, &opaqueDepthState);
+    }
+    if (!transparentDepthState) {
+        D3D11_DEPTH_STENCIL_DESC dsd = {};
+        dsd.DepthEnable = TRUE;
+        dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        dsd.DepthFunc = D3D11_COMPARISON_GREATER;
+        dsd.StencilEnable = FALSE;
+        device->CreateDepthStencilState(&dsd, &transparentDepthState);
+    }
+    if (!blendStateAlpha) {
+        D3D11_BLEND_DESC bd = {};
+        bd.RenderTarget[0].BlendEnable = TRUE;
+        bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+        bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+        bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        device->CreateBlendState(&bd, &blendStateAlpha);
+    }
 
     viewport.Width = (FLOAT)w;
     viewport.Height = (FLOAT)h;
@@ -73,7 +102,8 @@ void RenderDevice::PrepareFrame(const FLOAT clearColor[4]) {
     context->RSSetViewports(1, &viewport);
     context->OMSetRenderTargets(1, &backBufferRTV, depthStencilView);
     context->ClearRenderTargetView(backBufferRTV, clearColor);
-    context->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    context->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH, 0.0f, 0);
+    context->OMSetDepthStencilState(opaqueDepthState, 0);
 }
 
 void RenderDevice::EndFrame() {
@@ -81,6 +111,9 @@ void RenderDevice::EndFrame() {
 }
 
 void RenderDevice::Cleanup() {
+    SAFE_RELEASE(blendStateAlpha);
+    SAFE_RELEASE(transparentDepthState);
+    SAFE_RELEASE(opaqueDepthState);
     SAFE_RELEASE(depthStencilView);
     SAFE_RELEASE(depthStencilBuffer);
     SAFE_RELEASE(backBufferRTV);

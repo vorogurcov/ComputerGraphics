@@ -131,6 +131,7 @@
     <ClCompile Include="dds_loader.cpp" />
     <ClCompile Include="render_device.cpp" />
     <ClCompile Include="skybox_component.cpp" />
+    <ClCompile Include="transparent_quad_component.cpp" />
     <ClCompile Include="src.cpp" />
     <ClCompile Include="triangle_component.cpp" />
   </ItemGroup>
@@ -139,6 +140,7 @@
     <ClInclude Include="dds_loader.h" />
     <ClInclude Include="render_device.h" />
     <ClInclude Include="skybox_component.h" />
+    <ClInclude Include="transparent_quad_component.h" />
     <ClInclude Include="triangle_component.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>

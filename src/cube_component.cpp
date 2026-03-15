@@ -103,37 +103,26 @@ void CubeComponent::Init(ID3D11Device* device) {
     HRESULT hr;
 
     CubeVertex vertices[] = {
-        // -Z
         { {-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
         { {-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f, 1.0f}, {0.0f, 0.0f} },
         { { 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f, 1.0f}, {1.0f, 0.0f} },
         { { 0.5f, -0.5f, -0.5f}, {1.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 1.0f} },
-
-        // +Z
         { {-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 1.0f, 1.0f}, {0.0f, 1.0f} },
-        { { 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f} }, 
-        { {-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f} }, 
+        { { 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f} },
+        { {-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f} },
         { { 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 1.0f} },
-
-        // -X
         { {-0.5f, -0.5f,  0.5f}, {0.8f, 0.2f, 0.2f, 1.0f}, {0.0f, 1.0f} },
         { {-0.5f,  0.5f,  0.5f}, {0.8f, 0.6f, 0.2f, 1.0f}, {0.0f, 0.0f} },
         { {-0.5f,  0.5f, -0.5f}, {0.4f, 0.8f, 0.2f, 1.0f}, {1.0f, 0.0f} },
         { {-0.5f, -0.5f, -0.5f}, {0.2f, 0.4f, 0.8f, 1.0f}, {1.0f, 1.0f} },
-
-        // +X
         { { 0.5f, -0.5f, -0.5f}, {0.9f, 0.3f, 0.3f, 1.0f}, {0.0f, 1.0f} },
         { { 0.5f,  0.5f, -0.5f}, {0.3f, 0.9f, 0.3f, 1.0f}, {0.0f, 0.0f} },
         { { 0.5f,  0.5f,  0.5f}, {0.3f, 0.3f, 0.9f, 1.0f}, {1.0f, 0.0f} },
         { { 0.5f, -0.5f,  0.5f}, {0.9f, 0.9f, 0.3f, 1.0f}, {1.0f, 1.0f} },
-
-        // +Y
         { {-0.5f,  0.5f, -0.5f}, {0.2f, 0.7f, 1.0f, 1.0f}, {0.0f, 1.0f} },
         { {-0.5f,  0.5f,  0.5f}, {0.2f, 0.5f, 0.9f, 1.0f}, {0.0f, 0.0f} },
         { { 0.5f,  0.5f,  0.5f}, {0.4f, 0.8f, 0.9f, 1.0f}, {1.0f, 0.0f} },
         { { 0.5f,  0.5f, -0.5f}, {0.6f, 0.9f, 1.0f, 1.0f}, {1.0f, 1.0f} },
-
-        // -Y
         { {-0.5f, -0.5f,  0.5f}, {0.7f, 0.2f, 0.5f, 1.0f}, {0.0f, 1.0f} },
         { {-0.5f, -0.5f, -0.5f}, {0.5f, 0.2f, 0.7f, 1.0f}, {0.0f, 0.0f} },
         { { 0.5f, -0.5f, -0.5f}, {0.7f, 0.5f, 0.2f, 1.0f}, {1.0f, 0.0f} },
@@ -150,17 +139,11 @@ void CubeComponent::Init(ID3D11Device* device) {
     assert(SUCCEEDED(hr));
 
     WORD indices[] = {
-        // -Z (0..3)
         0,1,2, 0,2,3,
-        // +Z (4..7)
         4,5,6, 4,7,5,
-        // -X (8..11)
         8,9,10, 8,10,11,
-        // +X (12..15)
         12,13,14, 12,14,15,
-        // +Y (16..19)
         16,17,18, 16,18,19,
-        // -Y (20..23)
         20,21,22, 20,22,23
     };
 
@@ -190,8 +173,6 @@ void CubeComponent::Init(ID3D11Device* device) {
 
     CompileAndCreateShaders(device);
 
-    // DDS Texture2D + SRV + Sampler
-    // Если файл не нашли или он некорректен — делаем 1x1 белую текстуру, чтобы куб был виден и можно было отладить.
     {
         DDSLoadedImage img;
         std::string err;
@@ -318,7 +299,54 @@ void CubeComponent::Render(ID3D11DeviceContext* context, float time, float aspec
         DirectX::XMVECTOR focus = DirectX::XMVectorAdd(cameraPos, forward);
 
         DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
-        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, 0.1f, 100.0f);
+        const float nearZ = 0.1f;
+        const float farZ = 100.0f;
+        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, farZ, nearZ);
+
+        sb->vp = DirectX::XMMatrixMultiply(v, p);
+
+        context->Unmap(vpBuffer, 0);
+    }
+
+    ID3D11Buffer* cbs[] = { mBuffer, vpBuffer };
+    context->VSSetConstantBuffers(0, 2, cbs);
+
+    context->PSSetShaderResources(0, 1, &colorTextureSRV);
+    context->PSSetSamplers(0, 1, &colorSampler);
+
+    context->DrawIndexed(36, 0, 0);
+}
+
+void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX::XMMATRIX& modelMatrix, float aspectRatio, float camPitch, float camYaw) {
+    UINT stride = sizeof(CubeVertex);
+    UINT offset = 0;
+    context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+    context->IASetIndexBuffer(indexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    context->IASetInputLayout(inputLayout);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    context->VSSetShader(vertexShader, nullptr, 0);
+    context->PSSetShader(pixelShader, nullptr, 0);
+
+    CubeModelBuffer mb;
+    mb.m = modelMatrix;
+    context->UpdateSubresource(mBuffer, 0, nullptr, &mb, 0, 0);
+
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    if (SUCCEEDED(context->Map(vpBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource))) {
+        CubeSceneBuffer* sb = (CubeSceneBuffer*)mappedResource.pData;
+
+        DirectX::XMVECTOR cameraPos = DirectX::XMVectorSet(0.0f, 0.0f, -3.0f, 1.0f);
+        DirectX::XMMATRIX cameraRot = DirectX::XMMatrixRotationRollPitchYaw(camPitch, camYaw, 0.0f);
+
+        DirectX::XMVECTOR forward = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), cameraRot);
+        DirectX::XMVECTOR up = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), cameraRot);
+        DirectX::XMVECTOR focus = DirectX::XMVectorAdd(cameraPos, forward);
+
+        DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
+        const float nearZ = 0.1f;
+        const float farZ = 100.0f;
+        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, farZ, nearZ);
 
         sb->vp = DirectX::XMMatrixMultiply(v, p);
 
