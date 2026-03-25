@@ -79,19 +79,27 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
             {
                 using namespace DirectX;
-                CubeFrameLightingParams lighting = {};
-                lighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
-                lighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
-                lighting.lightCount = 3;
-                lighting.enableNormalMapping = true;
+                CubeFrameLightingParams noNormalLighting = {};
+                noNormalLighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
+                noNormalLighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
+                noNormalLighting.lightCount = 3;
+                noNormalLighting.enableNormalMapping = false;
 
-                lighting.lights[0].position = XMFLOAT3(cosf(time) * 1.2f, 0.8f, sinf(time) * 1.2f + 0.2f);
-                lighting.lights[0].color = XMFLOAT3(1.0f, 0.85f, 0.75f);
-                lighting.lights[1].position = XMFLOAT3(-1.1f, 0.3f, 0.9f);
-                lighting.lights[1].color = XMFLOAT3(0.35f, 0.55f, 1.0f);
-                lighting.lights[2].position = XMFLOAT3(0.9f, -0.25f, -0.35f);
-                lighting.lights[2].color = XMFLOAT3(0.65f, 1.0f, 0.7f);
-                g_cube->SetLightingParams(lighting);
+                CubeFrameLightingParams withNormalLighting = {};
+                withNormalLighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
+                withNormalLighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
+                withNormalLighting.lightCount = 3;
+                withNormalLighting.enableNormalMapping = true;
+
+                withNormalLighting.lights[0].position = XMFLOAT3(cosf(time) * 1.2f, 0.8f, sinf(time) * 1.2f + 0.2f);
+                withNormalLighting.lights[0].color = XMFLOAT3(1.0f, 0.85f, 0.75f);
+                withNormalLighting.lights[1].position = XMFLOAT3(-1.1f, 0.3f, 0.9f);
+                withNormalLighting.lights[1].color = XMFLOAT3(0.35f, 0.55f, 1.0f);
+                withNormalLighting.lights[2].position = XMFLOAT3(0.9f, -0.25f, -0.35f);
+                withNormalLighting.lights[2].color = XMFLOAT3(0.65f, 1.0f, 0.7f);
+                noNormalLighting.lights[0] = withNormalLighting.lights[0];
+                noNormalLighting.lights[1] = withNormalLighting.lights[1];
+                noNormalLighting.lights[2] = withNormalLighting.lights[2];
 
                 XMMATRIX modelCubeA =
                     XMMatrixRotationAxis(XMVectorSet(1.0f, 1.0f, 0.0f, 0.0f), time) *
@@ -101,7 +109,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                     XMMatrixRotationY(-time * 0.35f) *
                     XMMatrixTranslation(0.55f, 0.12f, 0.45f);
 
+                g_cube->SetLightingParams(noNormalLighting);
                 g_cube->RenderWithModel(g_rd->context, modelCubeA, aspectRatio, g_camPitch, g_camYaw);
+
+                g_cube->SetLightingParams(withNormalLighting);
                 g_cube->RenderWithModel(g_rd->context, modelCubeB, aspectRatio, g_camPitch, g_camYaw);
             }
 

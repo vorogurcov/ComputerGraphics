@@ -66,7 +66,8 @@ struct CubeComponent {
     void Cleanup();
 
 private:
-    void CompileAndCreateShaders(ID3D11Device* device);
+    bool CompileAndCreateShaders(ID3D11Device* device);
+    bool isInitialized = false;
     bool hasNormalTextureFromFile = false;
     CubeFrameLightingParams frameLightingParams = {};
     ID3D11PixelShader* pixelShaderWithNormalMap = nullptr;

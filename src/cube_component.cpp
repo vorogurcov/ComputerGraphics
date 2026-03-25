@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <windows.h>
 
 namespace {
 
@@ -26,6 +27,37 @@ std::string DirectoryOf(const std::string& path) {
     const size_t slash = path.find_last_of("/\\");
     if (slash == std::string::npos) return ".";
     return path.substr(0, slash);
+}
+
+std::string GetExecutableDirectoryA() {
+    char path[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return ".";
+    return DirectoryOf(std::string(path, path + len));
+}
+
+std::wstring GetExecutableDirectoryW() {
+    wchar_t path[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return L".";
+    std::wstring s(path, path + len);
+    const size_t slash = s.find_last_of(L"/\\");
+    if (slash == std::wstring::npos) return L".";
+    return s.substr(0, slash);
+}
+
+std::string JoinPathA(const std::string& a, const std::string& b) {
+    if (a.empty()) return b;
+    char back = a.back();
+    if (back == '\\' || back == '/') return a + b;
+    return a + "\\" + b;
+}
+
+std::wstring JoinPathW(const std::wstring& a, const std::wstring& b) {
+    if (a.empty()) return b;
+    wchar_t back = a.back();
+    if (back == L'\\' || back == L'/') return a + b;
+    return a + L"\\" + b;
 }
 
 class ShaderFileInclude final : public ID3DInclude {
@@ -96,12 +128,12 @@ bool CompileShaderFromFile(
     return true;
 }
 
-const char* SelectExistingPath(const char* const* candidates, size_t count) {
+std::string SelectExistingPath(const std::vector<std::string>& candidates) {
     std::string probe;
-    for (size_t i = 0; i < count; ++i) {
-        if (ReadTextFile(candidates[i], probe)) return candidates[i];
+    for (const std::string& candidate : candidates) {
+        if (ReadTextFile(candidate.c_str(), probe)) return candidate;
     }
-    return nullptr;
+    return std::string();
 }
 
 void CreateFallbackTexture(
@@ -138,16 +170,15 @@ void CreateFallbackTexture(
 
 bool LoadTexture2DFromDDS(
     ID3D11Device* device,
-    const wchar_t* const* candidates,
-    size_t candidateCount,
+    const std::vector<std::wstring>& candidates,
     ID3D11Texture2D** outTexture,
     ID3D11ShaderResourceView** outSRV,
     const char* textureName) {
     DDSLoadedImage img;
     std::string err;
     bool ok = false;
-    for (size_t i = 0; i < candidateCount; ++i) {
-        if (LoadDDSFromFile(candidates[i], img, &err)) {
+    for (const std::wstring& candidate : candidates) {
+        if (LoadDDSFromFile(candidate.c_str(), img, &err)) {
             ok = true;
             std::string msg = textureName;
             msg += " DDS loaded.\n";
@@ -204,34 +235,40 @@ bool LoadTexture2DFromDDS(
     return true;
 }
 
-} // namespace
+}
 
-void CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
+bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
     HRESULT hr;
     ID3DBlob* vsBlob = nullptr;
     ID3DBlob* psBlob = nullptr;
 
-    const char* const vsCandidates[] = {
-        "src/shaders/cube_lit_vs.hlsl",
-        "shaders/cube_lit_vs.hlsl"
+    const std::string exeDir = GetExecutableDirectoryA();
+    const std::vector<std::string> vsCandidates = {
+        JoinPathA(exeDir, "shaders\\cube_lit_vs.hlsl"),
+        JoinPathA(exeDir, "src\\shaders\\cube_lit_vs.hlsl"),
+        "shaders/cube_lit_vs.hlsl",
+        "src/shaders/cube_lit_vs.hlsl"
     };
-    const char* const psCandidates[] = {
-        "src/shaders/cube_lit_ps.hlsl",
-        "shaders/cube_lit_ps.hlsl"
+    const std::vector<std::string> psCandidates = {
+        JoinPathA(exeDir, "shaders\\cube_lit_ps.hlsl"),
+        JoinPathA(exeDir, "src\\shaders\\cube_lit_ps.hlsl"),
+        "shaders/cube_lit_ps.hlsl",
+        "src/shaders/cube_lit_ps.hlsl"
     };
-    const char* vsPath = SelectExistingPath(vsCandidates, ARRAYSIZE(vsCandidates));
-    const char* psPath = SelectExistingPath(psCandidates, ARRAYSIZE(psCandidates));
-    assert(vsPath && psPath);
-
-    std::string includeDir = DirectoryOf(vsPath ? vsPath : ".");
-    ShaderFileInclude includeHandler(includeDir);
-
-    if (!CompileShaderFromFile(vsPath, "main", "vs_4_0", nullptr, &includeHandler, &vsBlob)) {
-        assert(false && "Failed to compile cube vertex shader!");
+    const std::string vsPath = SelectExistingPath(vsCandidates);
+    const std::string psPath = SelectExistingPath(psCandidates);
+    if (vsPath.empty() || psPath.empty()) {
+        OutputDebugStringA("Cube shader files not found.\n");
+        return false;
     }
 
+    std::string includeDir = DirectoryOf(vsPath);
+    ShaderFileInclude includeHandler(includeDir);
+
+    if (!CompileShaderFromFile(vsPath.c_str(), "main", "vs_4_0", nullptr, &includeHandler, &vsBlob)) return false;
+
     hr = device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShader);
-    assert(SUCCEEDED(hr));
+    if (FAILED(hr)) { SAFE_RELEASE(vsBlob); return false; }
 
     D3D11_INPUT_ELEMENT_DESC layout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -240,64 +277,55 @@ void CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
         { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
     };
     hr = device->CreateInputLayout(layout, ARRAYSIZE(layout), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayout);
-    assert(SUCCEEDED(hr));
     SAFE_RELEASE(vsBlob);
+    if (FAILED(hr)) return false;
 
     const D3D_SHADER_MACRO psWithNormalMacros[] = {
         { "USE_NORMAL_MAP", "1" },
         { nullptr, nullptr }
     };
-    if (!CompileShaderFromFile(psPath, "main", "ps_4_0", psWithNormalMacros, &includeHandler, &psBlob)) {
-        assert(false && "Failed to compile cube pixel shader (normal map)!");
-    }
+    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", psWithNormalMacros, &includeHandler, &psBlob)) return false;
     hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShaderWithNormalMap);
-    assert(SUCCEEDED(hr));
     SAFE_RELEASE(psBlob);
+    if (FAILED(hr)) return false;
 
     const D3D_SHADER_MACRO psNoNormalMacros[] = {
         { "USE_NORMAL_MAP", "0" },
         { nullptr, nullptr }
     };
-    if (!CompileShaderFromFile(psPath, "main", "ps_4_0", psNoNormalMacros, &includeHandler, &psBlob)) {
-        assert(false && "Failed to compile cube pixel shader (no normal map)!");
-    }
+    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", psNoNormalMacros, &includeHandler, &psBlob)) return false;
     hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShaderNoNormalMap);
-    assert(SUCCEEDED(hr));
     SAFE_RELEASE(psBlob);
+    if (FAILED(hr)) return false;
 
     pixelShader = pixelShaderWithNormalMap;
+    return true;
 }
 
 void CubeComponent::Init(ID3D11Device* device) {
     HRESULT hr;
 
     const CubeVertex vertices[] = {
-        // -Z
         { {-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
         { {-0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
-        // +Z
         { {-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { {-0.5f,  0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
-        // -X
         { {-0.5f, -0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, -1.0f} },
         { {-0.5f,  0.5f,  0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, -1.0f} },
         { {-0.5f,  0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, -1.0f} },
         { {-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, -1.0f} },
-        // +X
         { { 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f} },
         { { 0.5f,  0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f} },
         { { 0.5f,  0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f} },
         { { 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f} },
-        // +Y
         { {-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
         { {-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
-        // -Y
         { {-0.5f, -0.5f,  0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f} },
         { {-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
         { { 0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f} },
@@ -346,28 +374,39 @@ void CubeComponent::Init(ID3D11Device* device) {
     hr = device->CreateBuffer(&vpbd, nullptr, &vpBuffer);
     assert(SUCCEEDED(hr));
 
-    CompileAndCreateShaders(device);
+    if (!CompileAndCreateShaders(device)) {
+        OutputDebugStringA("Cube init failed while compiling shaders.\n");
+        isInitialized = false;
+        return;
+    }
 
-    const wchar_t* colorCandidates[] = {
-        L"assets/cube.dds",
-        L"src/assets/cube.dds",
+    const std::wstring exeDir = GetExecutableDirectoryW();
+    const std::vector<std::wstring> colorCandidates = {
+        JoinPathW(exeDir, L"assets\\cube.dds"),
+        JoinPathW(exeDir, L"src\\assets\\cube.dds"),
+        L"assets\\cube.dds",
+        L"src\\assets\\cube.dds",
     };
-    const bool colorLoaded = LoadTexture2DFromDDS(device, colorCandidates, ARRAYSIZE(colorCandidates), &colorTexture, &colorTextureSRV, "Cube albedo");
+    const bool colorLoaded = LoadTexture2DFromDDS(device, colorCandidates, &colorTexture, &colorTextureSRV, "Cube albedo");
     if (!colorLoaded) {
         CreateFallbackTexture(device, 0xffffffffu, &colorTexture, &colorTextureSRV);
     }
 
-    const wchar_t* normalCandidates[] = {
-        L"assets/cube_normal.dds",
-        L"assets/cube_n.dds",
-        L"assets/normal.dds",
-        L"src/assets/cube_normal.dds",
+    const std::vector<std::wstring> normalCandidates = {
+        JoinPathW(exeDir, L"assets\\cube_normal.dds"),
+        JoinPathW(exeDir, L"assets\\cube_n.dds"),
+        JoinPathW(exeDir, L"assets\\normal.dds"),
+        JoinPathW(exeDir, L"src\\assets\\cube_normal.dds"),
+        L"assets\\cube_normal.dds",
+        L"assets\\cube_n.dds",
+        L"assets\\normal.dds",
+        L"src\\assets\\cube_normal.dds",
     };
-    hasNormalTextureFromFile = LoadTexture2DFromDDS(device, normalCandidates, ARRAYSIZE(normalCandidates), &normalTexture, &normalTextureSRV, "Cube normal");
+    hasNormalTextureFromFile = LoadTexture2DFromDDS(device, normalCandidates, &normalTexture, &normalTextureSRV, "Cube normal");
     if (!hasNormalTextureFromFile) {
-        // Flat tangent-space normal: (0.5, 0.5, 1.0).
         CreateFallbackTexture(device, 0xffff8080u, &normalTexture, &normalTextureSRV);
     }
+    OutputDebugStringA(hasNormalTextureFromFile ? "Normal map: loaded from file\n" : "Normal map: fallback\n");
 
     D3D11_SAMPLER_DESC sd = {};
     sd.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -384,6 +423,7 @@ void CubeComponent::Init(ID3D11Device* device) {
     frameLightingParams.lightCount = 1;
     frameLightingParams.lights[0].position = DirectX::XMFLOAT3(0.7f, 0.8f, -0.5f);
     frameLightingParams.lights[0].color = DirectX::XMFLOAT3(1.0f, 0.95f, 0.9f);
+    isInitialized = true;
 }
 
 void CubeComponent::SetLightingParams(const CubeFrameLightingParams& params) {
@@ -403,6 +443,8 @@ void CubeComponent::Render(ID3D11DeviceContext* context, float time, float aspec
 }
 
 void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX::XMMATRIX& modelMatrix, float aspectRatio, float camPitch, float camYaw) {
+    if (!isInitialized || !vertexShader || !inputLayout || !pixelShaderWithNormalMap || !pixelShaderNoNormalMap) return;
+
     UINT stride = sizeof(CubeVertex);
     UINT offset = 0;
     context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
@@ -411,7 +453,7 @@ void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX:
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     context->VSSetShader(vertexShader, nullptr, 0);
-    const bool useNormalMap = frameLightingParams.enableNormalMapping && (normalTextureSRV != nullptr);
+    const bool useNormalMap = frameLightingParams.enableNormalMapping && hasNormalTextureFromFile;
     context->PSSetShader(useNormalMap ? pixelShaderWithNormalMap : pixelShaderNoNormalMap, nullptr, 0);
 
     CubeModelBuffer mb = {};
@@ -461,6 +503,7 @@ void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX:
 }
 
 void CubeComponent::Cleanup() {
+    isInitialized = false;
     SAFE_RELEASE(colorSampler);
     SAFE_RELEASE(normalTextureSRV);
     SAFE_RELEASE(normalTexture);

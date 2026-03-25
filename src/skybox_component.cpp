@@ -6,6 +6,25 @@
 #include <cstring>
 #include <string>
 
+namespace {
+std::wstring GetExecutableDirectoryW() {
+    wchar_t path[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return L".";
+    std::wstring s(path, path + len);
+    const size_t slash = s.find_last_of(L"/\\");
+    if (slash == std::wstring::npos) return L".";
+    return s.substr(0, slash);
+}
+
+std::wstring JoinPathW(const std::wstring& a, const std::wstring& b) {
+    if (a.empty()) return b;
+    wchar_t back = a.back();
+    if (back == L'\\' || back == L'/') return a + b;
+    return a + L"\\" + b;
+}
+}
+
 const char* g_SkyboxVertexShaderSource = R"(
 cbuffer SceneBuffer : register(b0) {
     float4x4 vp;
@@ -111,18 +130,22 @@ void SkyboxComponent::CreatePipelineStates(ID3D11Device* device) {
 void SkyboxComponent::LoadCubemapDDS(ID3D11Device* device) {
     DDSLoadedImage img;
     std::string err;
-    const wchar_t* candidates[] = {
-        L"assets/skybox.dds",
+    const std::wstring exeDir = GetExecutableDirectoryW();
+    const std::wstring candidates[] = {
+        JoinPathW(exeDir, L"assets\\skybox.dds"),
+        JoinPathW(exeDir, L"src\\assets\\skybox.dds"),
+        L"assets\\skybox.dds",
+        L"src\\assets\\skybox.dds",
     };
 
     bool ok = false;
     for (size_t i = 0; i < ARRAYSIZE(candidates); ++i) {
-        if (LoadDDSFromFile(candidates[i], img, &err)) {
+        if (LoadDDSFromFile(candidates[i].c_str(), img, &err)) {
             ok = true;
             std::string msg = "Skybox DDS loaded from: ";
             char buf[260];
             size_t converted = 0;
-            wcstombs_s(&converted, buf, candidates[i], _TRUNCATE);
+            wcstombs_s(&converted, buf, candidates[i].c_str(), _TRUNCATE);
             msg += buf;
             msg += "\n";
             OutputDebugStringA(msg.c_str());
@@ -134,7 +157,14 @@ void SkyboxComponent::LoadCubemapDDS(ID3D11Device* device) {
         if (ok && !img.isCubemap) OutputDebugStringA("Skybox DDS is not a cubemap (need DDS cubemap).\n");
         if (ok && img.isCubemap && img.arraySize != 6) OutputDebugStringA("Skybox DDS: expected exactly 6 faces.\n");
 
-        const uint32_t blue = 0xffff0000u;
+        const uint32_t fallbackFaces[6] = {
+            0xff4040ffu,
+            0xff40ff40u,
+            0xffff4040u,
+            0xff40ffffu,
+            0xffff40ffu,
+            0xffffff40u
+        };
         D3D11_TEXTURE2D_DESC desc = {};
         desc.Width = 1;
         desc.Height = 1;
@@ -148,7 +178,7 @@ void SkyboxComponent::LoadCubemapDDS(ID3D11Device* device) {
 
         D3D11_SUBRESOURCE_DATA init[6] = {};
         for (int i = 0; i < 6; ++i) {
-            init[i].pSysMem = &blue;
+            init[i].pSysMem = &fallbackFaces[i];
             init[i].SysMemPitch = 4;
             init[i].SysMemSlicePitch = 4;
         }
