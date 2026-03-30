@@ -3,11 +3,14 @@
 #include "dds_loader.h"
 
 #include <assert.h>
+#include <algorithm>
+#include <cfloat>
 #include <cstring>
 #include <string>
 #include <vector>
 #include <fstream>
 #include <windows.h>
+#include <DirectXCollision.h>
 
 namespace {
 
@@ -168,6 +171,44 @@ void CreateFallbackTexture(
     assert(SUCCEEDED(hr));
 }
 
+void CreateFallbackTextureArray2(
+    ID3D11Device* device,
+    uint32_t rgba0,
+    uint32_t rgba1,
+    ID3D11Texture2D** outTexture,
+    ID3D11ShaderResourceView** outSRV) {
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = 1;
+    td.Height = 1;
+    td.MipLevels = 1;
+    td.ArraySize = 2;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init[2] = {};
+    init[0].pSysMem = &rgba0;
+    init[0].SysMemPitch = 4;
+    init[0].SysMemSlicePitch = 4;
+    init[1].pSysMem = &rgba1;
+    init[1].SysMemPitch = 4;
+    init[1].SysMemSlicePitch = 4;
+
+    HRESULT hr = device->CreateTexture2D(&td, init, outTexture);
+    assert(SUCCEEDED(hr));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvd = {};
+    srvd.Format = td.Format;
+    srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvd.Texture2DArray.MostDetailedMip = 0;
+    srvd.Texture2DArray.MipLevels = td.MipLevels;
+    srvd.Texture2DArray.FirstArraySlice = 0;
+    srvd.Texture2DArray.ArraySize = td.ArraySize;
+    hr = device->CreateShaderResourceView(*outTexture, &srvd, outSRV);
+    assert(SUCCEEDED(hr));
+}
+
 bool LoadTexture2DFromDDS(
     ID3D11Device* device,
     const std::vector<std::wstring>& candidates,
@@ -235,6 +276,81 @@ bool LoadTexture2DFromDDS(
     return true;
 }
 
+bool LoadDDSImageFromCandidates(
+    const std::vector<std::wstring>& candidates,
+    DDSLoadedImage& outImage,
+    const char* textureName) {
+    std::string err;
+    for (const std::wstring& candidate : candidates) {
+        if (LoadDDSFromFile(candidate.c_str(), outImage, &err)) {
+            std::string msg = textureName;
+            msg += " DDS loaded.\n";
+            OutputDebugStringA(msg.c_str());
+            return true;
+        }
+    }
+    std::string msg = textureName;
+    msg += " DDS load failed: ";
+    msg += err;
+    msg += "\n";
+    OutputDebugStringA(msg.c_str());
+    return false;
+}
+
+bool CreateTextureArray2FromDDS(
+    ID3D11Device* device,
+    const DDSLoadedImage& first,
+    const DDSLoadedImage& second,
+    ID3D11Texture2D** outTexture,
+    ID3D11ShaderResourceView** outSRV) {
+    if (first.isCubemap || second.isCubemap) return false;
+    if (first.arraySize != 1 || second.arraySize != 1) return false;
+    if (first.width != second.width || first.height != second.height) return false;
+    if (first.format != second.format || first.mipCount != second.mipCount) return false;
+
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = first.width;
+    td.Height = first.height;
+    td.MipLevels = first.mipCount;
+    td.ArraySize = 2;
+    td.Format = first.format;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    std::vector<D3D11_SUBRESOURCE_DATA> init;
+    init.resize((size_t)td.ArraySize * td.MipLevels);
+    for (uint32_t mip = 0; mip < td.MipLevels; ++mip) {
+        const DDSLoadedImageSubresource& sr0 = first.subresources[mip];
+        init[mip].pSysMem = first.data.data() + sr0.dataOffset;
+        init[mip].SysMemPitch = sr0.rowPitch;
+        init[mip].SysMemSlicePitch = sr0.slicePitch;
+
+        const DDSLoadedImageSubresource& sr1 = second.subresources[mip];
+        const uint32_t dstIndex = td.MipLevels + mip;
+        init[dstIndex].pSysMem = second.data.data() + sr1.dataOffset;
+        init[dstIndex].SysMemPitch = sr1.rowPitch;
+        init[dstIndex].SysMemSlicePitch = sr1.slicePitch;
+    }
+
+    HRESULT hr = device->CreateTexture2D(&td, init.data(), outTexture);
+    if (FAILED(hr)) return false;
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvd = {};
+    srvd.Format = td.Format;
+    srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvd.Texture2DArray.MostDetailedMip = 0;
+    srvd.Texture2DArray.MipLevels = td.MipLevels;
+    srvd.Texture2DArray.FirstArraySlice = 0;
+    srvd.Texture2DArray.ArraySize = td.ArraySize;
+    hr = device->CreateShaderResourceView(*outTexture, &srvd, outSRV);
+    if (FAILED(hr)) {
+        SAFE_RELEASE(*outTexture);
+        return false;
+    }
+    return true;
+}
+
 }
 
 bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
@@ -280,25 +396,11 @@ bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
     SAFE_RELEASE(vsBlob);
     if (FAILED(hr)) return false;
 
-    const D3D_SHADER_MACRO psWithNormalMacros[] = {
-        { "USE_NORMAL_MAP", "1" },
-        { nullptr, nullptr }
-    };
-    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", psWithNormalMacros, &includeHandler, &psBlob)) return false;
-    hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShaderWithNormalMap);
+    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", nullptr, &includeHandler, &psBlob)) return false;
+    hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShader);
     SAFE_RELEASE(psBlob);
     if (FAILED(hr)) return false;
 
-    const D3D_SHADER_MACRO psNoNormalMacros[] = {
-        { "USE_NORMAL_MAP", "0" },
-        { nullptr, nullptr }
-    };
-    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", psNoNormalMacros, &includeHandler, &psBlob)) return false;
-    hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShaderNoNormalMap);
-    SAFE_RELEASE(psBlob);
-    if (FAILED(hr)) return false;
-
-    pixelShader = pixelShaderWithNormalMap;
     return true;
 }
 
@@ -359,11 +461,20 @@ void CubeComponent::Init(ID3D11Device* device) {
     hr = device->CreateBuffer(&ibd, &iinitData, &indexBuffer);
     assert(SUCCEEDED(hr));
 
-    D3D11_BUFFER_DESC mbd = {};
-    mbd.ByteWidth = sizeof(CubeModelBuffer);
-    mbd.Usage = D3D11_USAGE_DEFAULT;
-    mbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    hr = device->CreateBuffer(&mbd, nullptr, &mBuffer);
+    D3D11_BUFFER_DESC gbd = {};
+    gbd.ByteWidth = sizeof(CubeGeomBufferInst);
+    gbd.Usage = D3D11_USAGE_DYNAMIC;
+    gbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    gbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = device->CreateBuffer(&gbd, nullptr, &geomInstBuffer);
+    assert(SUCCEEDED(hr));
+
+    D3D11_BUFFER_DESC vid = {};
+    vid.ByteWidth = sizeof(CubeGeomBufferInstVis);
+    vid.Usage = D3D11_USAGE_DYNAMIC;
+    vid.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    vid.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = device->CreateBuffer(&vid, nullptr, &geomInstVisBuffer);
     assert(SUCCEEDED(hr));
 
     D3D11_BUFFER_DESC vpbd = {};
@@ -381,15 +492,30 @@ void CubeComponent::Init(ID3D11Device* device) {
     }
 
     const std::wstring exeDir = GetExecutableDirectoryW();
-    const std::vector<std::wstring> colorCandidates = {
+    const std::vector<std::wstring> colorCandidates0 = {
         JoinPathW(exeDir, L"assets\\cube.dds"),
+        JoinPathW(exeDir, L"assets\\brick.dds"),
         JoinPathW(exeDir, L"src\\assets\\cube.dds"),
         L"assets\\cube.dds",
+        L"assets\\brick.dds",
         L"src\\assets\\cube.dds",
     };
-    const bool colorLoaded = LoadTexture2DFromDDS(device, colorCandidates, &colorTexture, &colorTextureSRV, "Cube albedo");
-    if (!colorLoaded) {
-        CreateFallbackTexture(device, 0xffffffffu, &colorTexture, &colorTextureSRV);
+    const std::vector<std::wstring> colorCandidates1 = {
+        JoinPathW(exeDir, L"assets\\cat.dds"),
+        JoinPathW(exeDir, L"assets\\cube_alt.dds"),
+        JoinPathW(exeDir, L"src\\assets\\cat.dds"),
+        L"assets\\cat.dds",
+        L"assets\\cube_alt.dds",
+        L"src\\assets\\cat.dds",
+    };
+    DDSLoadedImage tex0 = {};
+    DDSLoadedImage tex1 = {};
+    const bool firstLoaded = LoadDDSImageFromCandidates(colorCandidates0, tex0, "Cube albedo[0]");
+    const bool secondLoaded = LoadDDSImageFromCandidates(colorCandidates1, tex1, "Cube albedo[1]");
+    const bool colorArrayLoaded = firstLoaded && secondLoaded &&
+        CreateTextureArray2FromDDS(device, tex0, tex1, &colorTextureArray, &colorTextureArraySRV);
+    if (!colorArrayLoaded) {
+        CreateFallbackTextureArray2(device, 0xffa0a0a0u, 0xff4ca3ffu, &colorTextureArray, &colorTextureArraySRV);
     }
 
     const std::vector<std::wstring> normalCandidates = {
@@ -433,6 +559,56 @@ void CubeComponent::SetLightingParams(const CubeFrameLightingParams& params) {
     }
 }
 
+namespace {
+
+struct WorldAABB {
+    DirectX::XMFLOAT3 minP;
+    DirectX::XMFLOAT3 maxP;
+};
+
+WorldAABB ComputeCubeAabbWS(const DirectX::XMMATRIX& model) {
+    using namespace DirectX;
+    const XMVECTOR localCorners[8] = {
+        XMVectorSet(-0.5f, -0.5f, -0.5f, 1.0f),
+        XMVectorSet( 0.5f, -0.5f, -0.5f, 1.0f),
+        XMVectorSet(-0.5f,  0.5f, -0.5f, 1.0f),
+        XMVectorSet( 0.5f,  0.5f, -0.5f, 1.0f),
+        XMVectorSet(-0.5f, -0.5f,  0.5f, 1.0f),
+        XMVectorSet( 0.5f, -0.5f,  0.5f, 1.0f),
+        XMVectorSet(-0.5f,  0.5f,  0.5f, 1.0f),
+        XMVectorSet( 0.5f,  0.5f,  0.5f, 1.0f),
+    };
+
+    XMVECTOR minV = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 1.0f);
+    XMVECTOR maxV = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 1.0f);
+    for (int i = 0; i < 8; ++i) {
+        const XMVECTOR p = XMVector3TransformCoord(localCorners[i], model);
+        minV = XMVectorMin(minV, p);
+        maxV = XMVectorMax(maxV, p);
+    }
+
+    WorldAABB box = {};
+    XMStoreFloat3(&box.minP, minV);
+    XMStoreFloat3(&box.maxP, maxV);
+    return box;
+}
+
+bool IsAabbVisible(const WorldAABB& box, const DirectX::BoundingFrustum& frustum) {
+    using namespace DirectX;
+    const XMFLOAT3 center(
+        0.5f * (box.minP.x + box.maxP.x),
+        0.5f * (box.minP.y + box.maxP.y),
+        0.5f * (box.minP.z + box.maxP.z));
+    const XMFLOAT3 extents(
+        0.5f * (box.maxP.x - box.minP.x),
+        0.5f * (box.maxP.y - box.minP.y),
+        0.5f * (box.maxP.z - box.minP.z));
+    const BoundingBox bb(center, extents);
+    return frustum.Contains(bb) != DirectX::DISJOINT;
+}
+
+}
+
 void CubeComponent::Render(ID3D11DeviceContext* context, float time, float aspectRatio, float camPitch, float camYaw) {
     RenderWithModel(
         context,
@@ -443,7 +619,17 @@ void CubeComponent::Render(ID3D11DeviceContext* context, float time, float aspec
 }
 
 void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX::XMMATRIX& modelMatrix, float aspectRatio, float camPitch, float camYaw) {
-    if (!isInitialized || !vertexShader || !inputLayout || !pixelShaderWithNormalMap || !pixelShaderNoNormalMap) return;
+    CubeInstanceData single = {};
+    single.model = modelMatrix;
+    single.shininess = 32.0f;
+    single.textureId = 0;
+    single.useNormalMap = true;
+    RenderInstanced(context, &single, 1, aspectRatio, camPitch, camYaw);
+}
+
+void CubeComponent::RenderInstanced(ID3D11DeviceContext* context, const CubeInstanceData* instances, UINT instanceCount, float aspectRatio, float camPitch, float camYaw) {
+    if (!isInitialized || !vertexShader || !pixelShader || !inputLayout || !instances || instanceCount == 0) return;
+    const UINT totalCount = (std::min)(instanceCount, (UINT)MAX_CUBE_INSTANCES);
 
     UINT stride = sizeof(CubeVertex);
     UINT offset = 0;
@@ -453,53 +639,81 @@ void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX:
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     context->VSSetShader(vertexShader, nullptr, 0);
-    const bool useNormalMap = frameLightingParams.enableNormalMapping && hasNormalTextureFromFile;
-    context->PSSetShader(useNormalMap ? pixelShaderWithNormalMap : pixelShaderNoNormalMap, nullptr, 0);
+    context->PSSetShader(pixelShader, nullptr, 0);
 
-    CubeModelBuffer mb = {};
-    mb.m = modelMatrix;
-    mb.normalMatrix = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, modelMatrix));
-    context->UpdateSubresource(mBuffer, 0, nullptr, &mb, 0, 0);
+    const DirectX::XMVECTOR cameraPos = DirectX::XMVectorSet(
+        frameLightingParams.cameraPos.x,
+        frameLightingParams.cameraPos.y,
+        frameLightingParams.cameraPos.z,
+        1.0f);
+    const DirectX::XMMATRIX cameraRot = DirectX::XMMatrixRotationRollPitchYaw(camPitch, camYaw, 0.0f);
+    const DirectX::XMVECTOR forward = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), cameraRot);
+    const DirectX::XMVECTOR up = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), cameraRot);
+    const DirectX::XMVECTOR focus = DirectX::XMVectorAdd(cameraPos, forward);
+    const DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
+    const float nearZ = 0.1f;
+    const float farZ = 100.0f;
+    const DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, nearZ, farZ);
+    const DirectX::XMMATRIX vp = DirectX::XMMatrixMultiply(v, p);
 
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    if (SUCCEEDED(context->Map(vpBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource))) {
-        CubeSceneBuffer* sb = (CubeSceneBuffer*)mappedResource.pData;
+    DirectX::BoundingFrustum viewFrustum = {};
+    DirectX::BoundingFrustum::CreateFromMatrix(viewFrustum, p);
+    DirectX::BoundingFrustum worldFrustum = {};
+    const DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, v);
+    viewFrustum.Transform(worldFrustum, invView);
 
-        const DirectX::XMVECTOR cameraPos = DirectX::XMVectorSet(
-            frameLightingParams.cameraPos.x,
-            frameLightingParams.cameraPos.y,
-            frameLightingParams.cameraPos.z,
-            1.0f);
-        const DirectX::XMMATRIX cameraRot = DirectX::XMMatrixRotationRollPitchYaw(camPitch, camYaw, 0.0f);
-        const DirectX::XMVECTOR forward = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), cameraRot);
-        const DirectX::XMVECTOR up = DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), cameraRot);
-        const DirectX::XMVECTOR focus = DirectX::XMVectorAdd(cameraPos, forward);
+    CubeGeomBufferInst geomInst = {};
+    CubeGeomBufferInstVis visInst = {};
+    UINT visibleCount = 0;
+    for (UINT i = 0; i < totalCount; ++i) {
+        const WorldAABB aabb = ComputeCubeAabbWS(instances[i].model);
+        if (!IsAabbVisible(aabb, worldFrustum)) {
+            continue;
+        }
 
-        const DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
-        const float nearZ = 0.1f;
-        const float farZ = 100.0f;
-        const DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, farZ, nearZ);
+        visInst.ids[visibleCount] = DirectX::XMUINT4(i, 0, 0, 0);
+        CubeGeomBuffer& geom = geomInst.geomBuffer[i];
+        geom.m = instances[i].model;
+        geom.normalMatrix = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, instances[i].model));
+        const bool useNormalMap = instances[i].useNormalMap && frameLightingParams.enableNormalMapping && hasNormalTextureFromFile;
+        const float textureId = (float)((instances[i].textureId > 1u) ? 1u : instances[i].textureId);
+        geom.shineSpeedTexIdNM = DirectX::XMFLOAT4((std::max)(instances[i].shininess, 1.0f), 0.0f, textureId, useNormalMap ? 1.0f : 0.0f);
+        ++visibleCount;
+    }
 
-        sb->vp = DirectX::XMMatrixMultiply(v, p);
+    lastVisibleInstanceCount = visibleCount;
+    if (visibleCount == 0) return;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(context->Map(geomInstBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &geomInst, sizeof(geomInst));
+        context->Unmap(geomInstBuffer, 0);
+    }
+    if (SUCCEEDED(context->Map(geomInstVisBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &visInst, sizeof(visInst));
+        context->Unmap(geomInstVisBuffer, 0);
+    }
+    if (SUCCEEDED(context->Map(vpBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        CubeSceneBuffer* sb = (CubeSceneBuffer*)mapped.pData;
+        sb->vp = vp;
         sb->cameraPos = DirectX::XMFLOAT4(frameLightingParams.cameraPos.x, frameLightingParams.cameraPos.y, frameLightingParams.cameraPos.z, 1.0f);
         sb->ambientColor = DirectX::XMFLOAT4(frameLightingParams.ambientColor.x, frameLightingParams.ambientColor.y, frameLightingParams.ambientColor.z, 1.0f);
         sb->lightCount = frameLightingParams.lightCount > MAX_POINT_LIGHTS ? MAX_POINT_LIGHTS : frameLightingParams.lightCount;
         for (UINT i = 0; i < MAX_POINT_LIGHTS; ++i) {
             sb->lights[i] = frameLightingParams.lights[i];
         }
-
         context->Unmap(vpBuffer, 0);
     }
 
-    ID3D11Buffer* cbs[] = { mBuffer, vpBuffer };
-    context->VSSetConstantBuffers(0, 2, cbs);
-    context->PSSetConstantBuffers(0, 2, cbs);
+    ID3D11Buffer* cbs[] = { geomInstBuffer, vpBuffer, geomInstVisBuffer };
+    context->VSSetConstantBuffers(0, 3, cbs);
+    context->PSSetConstantBuffers(0, 3, cbs);
 
-    ID3D11ShaderResourceView* srvs[] = { colorTextureSRV, normalTextureSRV };
+    ID3D11ShaderResourceView* srvs[] = { colorTextureArraySRV, normalTextureSRV };
     context->PSSetShaderResources(0, 2, srvs);
     context->PSSetSamplers(0, 1, &colorSampler);
 
-    context->DrawIndexed(36, 0, 0);
+    context->DrawIndexedInstanced(36, visibleCount, 0, 0, 0);
 }
 
 void CubeComponent::Cleanup() {
@@ -507,16 +721,15 @@ void CubeComponent::Cleanup() {
     SAFE_RELEASE(colorSampler);
     SAFE_RELEASE(normalTextureSRV);
     SAFE_RELEASE(normalTexture);
-    SAFE_RELEASE(colorTextureSRV);
-    SAFE_RELEASE(colorTexture);
+    SAFE_RELEASE(colorTextureArraySRV);
+    SAFE_RELEASE(colorTextureArray);
 
-    SAFE_RELEASE(mBuffer);
+    SAFE_RELEASE(geomInstBuffer);
+    SAFE_RELEASE(geomInstVisBuffer);
     SAFE_RELEASE(vpBuffer);
     SAFE_RELEASE(indexBuffer);
     SAFE_RELEASE(vertexBuffer);
     SAFE_RELEASE(vertexShader);
-    SAFE_RELEASE(pixelShaderWithNormalMap);
-    SAFE_RELEASE(pixelShaderNoNormalMap);
-    pixelShader = nullptr;
+    SAFE_RELEASE(pixelShader);
     SAFE_RELEASE(inputLayout);
 }

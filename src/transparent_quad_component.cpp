@@ -114,7 +114,7 @@ void TransparentQuadComponent::RenderWithModel(ID3D11DeviceContext* context, con
         DirectX::XMMATRIX v = DirectX::XMMatrixLookAtLH(cameraPos, focus, up);
         const float nearZ = 0.1f;
         const float farZ = 100.0f;
-        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, farZ, nearZ);
+        DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, nearZ, farZ);
         sb->vp = DirectX::XMMatrixMultiply(v, p);
         context->Unmap(vpBuffer, 0);
     }

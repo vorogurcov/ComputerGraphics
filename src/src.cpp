@@ -79,41 +79,57 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
 
             {
                 using namespace DirectX;
-                CubeFrameLightingParams noNormalLighting = {};
-                noNormalLighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
-                noNormalLighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
-                noNormalLighting.lightCount = 3;
-                noNormalLighting.enableNormalMapping = false;
+                CubeFrameLightingParams lighting = {};
+                lighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
+                lighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
+                lighting.lightCount = 3;
+                lighting.enableNormalMapping = true;
+                lighting.lights[0].position = XMFLOAT3(cosf(time) * 1.2f, 0.8f, sinf(time) * 1.2f + 0.2f);
+                lighting.lights[0].color = XMFLOAT3(1.0f, 0.85f, 0.75f);
+                lighting.lights[1].position = XMFLOAT3(-1.1f, 0.3f, 0.9f);
+                lighting.lights[1].color = XMFLOAT3(0.35f, 0.55f, 1.0f);
+                lighting.lights[2].position = XMFLOAT3(0.9f, -0.25f, -0.35f);
+                lighting.lights[2].color = XMFLOAT3(0.65f, 1.0f, 0.7f);
+                g_cube->SetLightingParams(lighting);
 
-                CubeFrameLightingParams withNormalLighting = {};
-                withNormalLighting.cameraPos = XMFLOAT3(0.0f, 0.0f, -3.0f);
-                withNormalLighting.ambientColor = XMFLOAT3(0.12f, 0.12f, 0.14f);
-                withNormalLighting.lightCount = 3;
-                withNormalLighting.enableNormalMapping = true;
+                std::vector<CubeInstanceData> cubeInstances;
+                cubeInstances.reserve(10);
 
-                withNormalLighting.lights[0].position = XMFLOAT3(cosf(time) * 1.2f, 0.8f, sinf(time) * 1.2f + 0.2f);
-                withNormalLighting.lights[0].color = XMFLOAT3(1.0f, 0.85f, 0.75f);
-                withNormalLighting.lights[1].position = XMFLOAT3(-1.1f, 0.3f, 0.9f);
-                withNormalLighting.lights[1].color = XMFLOAT3(0.35f, 0.55f, 1.0f);
-                withNormalLighting.lights[2].position = XMFLOAT3(0.9f, -0.25f, -0.35f);
-                withNormalLighting.lights[2].color = XMFLOAT3(0.65f, 1.0f, 0.7f);
-                noNormalLighting.lights[0] = withNormalLighting.lights[0];
-                noNormalLighting.lights[1] = withNormalLighting.lights[1];
-                noNormalLighting.lights[2] = withNormalLighting.lights[2];
+                struct CubeSpawn {
+                    XMFLOAT3 pos;
+                    float scale;
+                    float rotSpeed;
+                };
+                const CubeSpawn spawns[10] = {
+                    { XMFLOAT3(-2.4f, -0.25f, 1.1f), 1.25f,  0.28f },
+                    { XMFLOAT3(-1.1f,  0.20f, 2.0f), 1.40f, -0.31f },
+                    { XMFLOAT3( 0.3f, -0.10f, 1.3f), 1.55f,  0.24f },
+                    { XMFLOAT3( 1.8f,  0.15f, 2.3f), 1.18f, -0.26f },
+                    { XMFLOAT3( 2.9f, -0.05f, 3.1f), 1.60f,  0.22f },
+                    { XMFLOAT3(-2.9f,  0.10f, 2.9f), 1.32f, -0.20f },
+                    { XMFLOAT3(-1.8f, -0.35f, 3.8f), 1.48f,  0.18f },
+                    { XMFLOAT3( 1.2f,  0.28f, 4.2f), 1.30f, -0.17f },
+                    { XMFLOAT3( 2.4f, -0.18f, 1.8f), 1.42f,  0.33f },
+                    { XMFLOAT3(-0.4f,  0.35f, 3.0f), 1.15f, -0.29f },
+                };
 
-                XMMATRIX modelCubeA =
-                    XMMatrixRotationAxis(XMVectorSet(1.0f, 1.0f, 0.0f, 0.0f), time) *
-                    XMMatrixTranslation(-0.45f, 0.0f, 0.1f);
-                XMMATRIX modelCubeB =
-                    XMMatrixScaling(0.92f, 0.55f, 0.72f) *
-                    XMMatrixRotationY(-time * 0.35f) *
-                    XMMatrixTranslation(0.55f, 0.12f, 0.45f);
+                for (int idx = 0; idx < 10; ++idx) {
+                    const CubeSpawn& s = spawns[idx];
+                    const float wobble = sinf(time * 1.1f + idx * 0.7f) * 0.12f;
+                    const XMMATRIX model =
+                        XMMatrixScaling(s.scale, s.scale, s.scale) *
+                        XMMatrixRotationY(time * s.rotSpeed) *
+                        XMMatrixTranslation(s.pos.x, s.pos.y + wobble, s.pos.z);
 
-                g_cube->SetLightingParams(noNormalLighting);
-                g_cube->RenderWithModel(g_rd->context, modelCubeA, aspectRatio, g_camPitch, g_camYaw);
+                    CubeInstanceData inst = {};
+                    inst.model = model;
+                    inst.shininess = ((idx % 3) == 0) ? 52.0f : 28.0f;
+                    inst.textureId = (idx & 1) ? 1u : 0u;
+                    inst.useNormalMap = ((idx % 4) != 1);
+                    cubeInstances.push_back(inst);
+                }
 
-                g_cube->SetLightingParams(withNormalLighting);
-                g_cube->RenderWithModel(g_rd->context, modelCubeB, aspectRatio, g_camPitch, g_camYaw);
+                g_cube->RenderInstanced(g_rd->context, cubeInstances.data(), (UINT)cubeInstances.size(), aspectRatio, g_camPitch, g_camYaw);
             }
 
             g_sky->Render(g_rd->context, aspectRatio, g_camPitch, g_camYaw);
@@ -147,14 +163,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 transparentInstances.reserve(2);
 
                 {
-                    XMMATRIX m = XMMatrixScaling(1.55f, 1.55f, 1.55f) * XMMatrixRotationY(time * 0.2f) * XMMatrixTranslation(0.0f, 0.0f, -0.25f);
+                    XMMATRIX m =
+                        XMMatrixScaling(2.85f, 2.85f, 2.85f) *
+                        XMMatrixRotationX(0.55f) *
+                        XMMatrixRotationY(time * 0.2f) *
+                        XMMatrixTranslation(0.0f, 0.0f, 2.1f);
                     TransparentInstance inst = {};
                     XMStoreFloat4x4(&inst.model, m);
                     inst.farthestPointDistance = computeFarthestDistance(m);
                     transparentInstances.push_back(inst);
                 }
                 {
-                    XMMATRIX m = XMMatrixScaling(1.15f, 1.15f, 1.15f) * XMMatrixRotationY(-time * 0.27f) * XMMatrixTranslation(0.35f, -0.2f, 0.8f);
+                    XMMATRIX m =
+                        XMMatrixScaling(2.35f, 2.35f, 2.35f) *
+                        XMMatrixRotationX(-0.45f) *
+                        XMMatrixRotationY(-time * 0.27f) *
+                        XMMatrixTranslation(0.35f, -0.1f, 2.9f);
                     TransparentInstance inst = {};
                     XMStoreFloat4x4(&inst.model, m);
                     inst.farthestPointDistance = computeFarthestDistance(m);
