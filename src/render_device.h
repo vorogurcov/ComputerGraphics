@@ -10,12 +10,18 @@ struct RenderDevice {
     ID3D11DeviceContext* context = nullptr;
     IDXGISwapChain* swapChain = nullptr;
     ID3D11RenderTargetView* backBufferRTV = nullptr;
+    ID3D11Texture2D* sceneColorTexture = nullptr;
+    ID3D11RenderTargetView* sceneColorRTV = nullptr;
+    ID3D11ShaderResourceView* sceneColorSRV = nullptr;
 
     ID3D11Texture2D* depthStencilBuffer = nullptr;
     ID3D11DepthStencilView* depthStencilView = nullptr;
     ID3D11DepthStencilState* opaqueDepthState = nullptr;
     ID3D11DepthStencilState* transparentDepthState = nullptr;
     ID3D11BlendState* blendStateAlpha = nullptr;
+    ID3D11VertexShader* postProcessVS = nullptr;
+    ID3D11PixelShader* postProcessPS = nullptr;
+    ID3D11SamplerState* postProcessSampler = nullptr;
 
     D3D11_VIEWPORT viewport = {};
 
