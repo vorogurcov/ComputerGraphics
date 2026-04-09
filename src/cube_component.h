@@ -26,15 +26,19 @@ struct CubePointLight {
 struct CubeGeomBuffer {
     DirectX::XMMATRIX m;
     DirectX::XMMATRIX normalMatrix;
-    DirectX::XMFLOAT4 shineSpeedTexIdNM; // x=shine, z=textureId, w=normalMapEnabled
+    DirectX::XMFLOAT4 shineSpeedTexIdNM;
 };
 
 struct CubeGeomBufferInst {
     CubeGeomBuffer geomBuffer[MAX_CUBE_INSTANCES];
 };
 
-struct CubeGeomBufferInstVis {
-    DirectX::XMUINT4 ids[MAX_CUBE_INSTANCES];
+struct CubeCullBuffer {
+    DirectX::XMFLOAT4 frustumPlanes[6];
+    UINT objectCount = 0;
+    float _pad0[3] = { 0.0f, 0.0f, 0.0f };
+    DirectX::XMFLOAT4 bbMin[MAX_CUBE_INSTANCES];
+    DirectX::XMFLOAT4 bbMax[MAX_CUBE_INSTANCES];
 };
 
 struct CubeSceneBuffer {
@@ -62,21 +66,32 @@ struct CubeInstanceData {
 };
 
 struct CubeComponent {
+    static const UINT PIPELINE_QUERY_COUNT = 10;
+    static const UINT CUBE_PRIMITIVES_PER_INSTANCE = 12;
+
     ID3D11Buffer* vertexBuffer = nullptr;
     ID3D11Buffer* indexBuffer = nullptr;
     ID3D11VertexShader* vertexShader = nullptr;
     ID3D11PixelShader* pixelShader = nullptr;
+    ID3D11ComputeShader* cullComputeShader = nullptr;
     ID3D11InputLayout* inputLayout = nullptr;
 
     ID3D11Buffer* geomInstBuffer = nullptr;
-    ID3D11Buffer* geomInstVisBuffer = nullptr;
+    ID3D11Buffer* cullBuffer = nullptr;
     ID3D11Buffer* vpBuffer = nullptr;
+    ID3D11Buffer* visibleIdsBuffer = nullptr;
+    ID3D11ShaderResourceView* visibleIdsSRV = nullptr;
+    ID3D11UnorderedAccessView* visibleIdsUAV = nullptr;
+    ID3D11Buffer* indirectArgsUAVBuffer = nullptr;
+    ID3D11UnorderedAccessView* indirectArgsUAV = nullptr;
+    ID3D11Buffer* indirectArgsBuffer = nullptr;
 
     ID3D11Texture2D* colorTextureArray = nullptr;
     ID3D11ShaderResourceView* colorTextureArraySRV = nullptr;
     ID3D11Texture2D* normalTexture = nullptr;
     ID3D11ShaderResourceView* normalTextureSRV = nullptr;
     ID3D11SamplerState* colorSampler = nullptr;
+    ID3D11Query* pipelineStatsQueries[PIPELINE_QUERY_COUNT] = {};
 
     void Init(ID3D11Device* device);
     void SetLightingParams(const CubeFrameLightingParams& params);
@@ -87,8 +102,13 @@ struct CubeComponent {
 
 private:
     bool CompileAndCreateShaders(ID3D11Device* device);
+    void InitPipelineStatsQueries(ID3D11Device* device);
+    void ReadPipelineStatsQueries(ID3D11DeviceContext* context);
     bool isInitialized = false;
     bool hasNormalTextureFromFile = false;
     UINT lastVisibleInstanceCount = 0;
+    UINT gpuVisibleInstances = 0;
+    UINT64 curFrame = 0;
+    UINT64 nextReadFrame = 0;
     CubeFrameLightingParams frameLightingParams = {};
 };

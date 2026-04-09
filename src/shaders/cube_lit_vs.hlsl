@@ -19,9 +19,7 @@ cbuffer SceneBuffer : register(b1) {
     PointLight lights[MAX_POINT_LIGHTS];
 };
 
-cbuffer GeomBufferInstVis : register(b2) {
-    uint4 ids[100];
-};
+StructuredBuffer<uint> visibleIds : register(t2);
 
 struct VS_INPUT {
     float3 Pos : POSITION;
@@ -42,7 +40,7 @@ struct VS_OUTPUT {
 
 VS_OUTPUT main(VS_INPUT input) {
     VS_OUTPUT output;
-    uint realIdx = ids[input.InstanceId].x;
+    uint realIdx = visibleIds[input.InstanceId];
     float4 worldPos = mul(geomBuffer[realIdx].model, float4(input.Pos, 1.0f));
     output.Pos = mul(vp, worldPos);
     output.WorldPos = worldPos.xyz;

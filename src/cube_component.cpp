@@ -5,12 +5,12 @@
 #include <assert.h>
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
 #include <fstream>
 #include <windows.h>
-#include <DirectXCollision.h>
 
 namespace {
 
@@ -357,6 +357,7 @@ bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
     HRESULT hr;
     ID3DBlob* vsBlob = nullptr;
     ID3DBlob* psBlob = nullptr;
+    ID3DBlob* csBlob = nullptr;
 
     const std::string exeDir = GetExecutableDirectoryA();
     const std::vector<std::string> vsCandidates = {
@@ -371,9 +372,16 @@ bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
         "shaders/cube_lit_ps.hlsl",
         "src/shaders/cube_lit_ps.hlsl"
     };
+    const std::vector<std::string> csCandidates = {
+        JoinPathA(exeDir, "shaders\\cube_frustum_cull_cs.hlsl"),
+        JoinPathA(exeDir, "src\\shaders\\cube_frustum_cull_cs.hlsl"),
+        "shaders/cube_frustum_cull_cs.hlsl",
+        "src/shaders/cube_frustum_cull_cs.hlsl"
+    };
     const std::string vsPath = SelectExistingPath(vsCandidates);
     const std::string psPath = SelectExistingPath(psCandidates);
-    if (vsPath.empty() || psPath.empty()) {
+    const std::string csPath = SelectExistingPath(csCandidates);
+    if (vsPath.empty() || psPath.empty() || csPath.empty()) {
         OutputDebugStringA("Cube shader files not found.\n");
         return false;
     }
@@ -381,7 +389,7 @@ bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
     std::string includeDir = DirectoryOf(vsPath);
     ShaderFileInclude includeHandler(includeDir);
 
-    if (!CompileShaderFromFile(vsPath.c_str(), "main", "vs_4_0", nullptr, &includeHandler, &vsBlob)) return false;
+    if (!CompileShaderFromFile(vsPath.c_str(), "main", "vs_5_0", nullptr, &includeHandler, &vsBlob)) return false;
 
     hr = device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &vertexShader);
     if (FAILED(hr)) { SAFE_RELEASE(vsBlob); return false; }
@@ -396,12 +404,48 @@ bool CubeComponent::CompileAndCreateShaders(ID3D11Device* device) {
     SAFE_RELEASE(vsBlob);
     if (FAILED(hr)) return false;
 
-    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_4_0", nullptr, &includeHandler, &psBlob)) return false;
+    if (!CompileShaderFromFile(psPath.c_str(), "main", "ps_5_0", nullptr, &includeHandler, &psBlob)) return false;
     hr = device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &pixelShader);
     SAFE_RELEASE(psBlob);
     if (FAILED(hr)) return false;
 
+    if (!CompileShaderFromFile(csPath.c_str(), "main", "cs_5_0", nullptr, &includeHandler, &csBlob)) return false;
+    hr = device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &cullComputeShader);
+    SAFE_RELEASE(csBlob);
+    if (FAILED(hr)) return false;
+
     return true;
+}
+
+void CubeComponent::InitPipelineStatsQueries(ID3D11Device* device) {
+    D3D11_QUERY_DESC qd = {};
+    qd.Query = D3D11_QUERY_PIPELINE_STATISTICS;
+    qd.MiscFlags = 0;
+    for (UINT i = 0; i < PIPELINE_QUERY_COUNT; ++i) {
+        SAFE_RELEASE(pipelineStatsQueries[i]);
+        HRESULT hr = device->CreateQuery(&qd, &pipelineStatsQueries[i]);
+        assert(SUCCEEDED(hr));
+    }
+}
+
+void CubeComponent::ReadPipelineStatsQueries(ID3D11DeviceContext* context) {
+    while (nextReadFrame < curFrame) {
+        const UINT queryIndex = (UINT)(nextReadFrame % PIPELINE_QUERY_COUNT);
+        D3D11_QUERY_DATA_PIPELINE_STATISTICS stats = {};
+        const HRESULT hr = context->GetData(
+            pipelineStatsQueries[queryIndex],
+            &stats,
+            sizeof(stats),
+            0);
+
+        if (hr == S_FALSE) {
+            break;
+        }
+        if (hr == S_OK) {
+            gpuVisibleInstances = (UINT)(stats.IAPrimitives / CUBE_PRIMITIVES_PER_INSTANCE);
+        }
+        ++nextReadFrame;
+    }
 }
 
 void CubeComponent::Init(ID3D11Device* device) {
@@ -469,14 +513,6 @@ void CubeComponent::Init(ID3D11Device* device) {
     hr = device->CreateBuffer(&gbd, nullptr, &geomInstBuffer);
     assert(SUCCEEDED(hr));
 
-    D3D11_BUFFER_DESC vid = {};
-    vid.ByteWidth = sizeof(CubeGeomBufferInstVis);
-    vid.Usage = D3D11_USAGE_DYNAMIC;
-    vid.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    vid.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    hr = device->CreateBuffer(&vid, nullptr, &geomInstVisBuffer);
-    assert(SUCCEEDED(hr));
-
     D3D11_BUFFER_DESC vpbd = {};
     vpbd.ByteWidth = sizeof(CubeSceneBuffer);
     vpbd.Usage = D3D11_USAGE_DYNAMIC;
@@ -485,11 +521,74 @@ void CubeComponent::Init(ID3D11Device* device) {
     hr = device->CreateBuffer(&vpbd, nullptr, &vpBuffer);
     assert(SUCCEEDED(hr));
 
+    D3D11_BUFFER_DESC cbd = {};
+    cbd.ByteWidth = sizeof(CubeCullBuffer);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    hr = device->CreateBuffer(&cbd, nullptr, &cullBuffer);
+    assert(SUCCEEDED(hr));
+
     if (!CompileAndCreateShaders(device)) {
         OutputDebugStringA("Cube init failed while compiling shaders.\n");
         isInitialized = false;
         return;
     }
+
+    D3D11_BUFFER_DESC visibleIdsDesc = {};
+    visibleIdsDesc.ByteWidth = sizeof(UINT) * MAX_CUBE_INSTANCES;
+    visibleIdsDesc.Usage = D3D11_USAGE_DEFAULT;
+    visibleIdsDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    visibleIdsDesc.CPUAccessFlags = 0;
+    visibleIdsDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    visibleIdsDesc.StructureByteStride = sizeof(UINT);
+    hr = device->CreateBuffer(&visibleIdsDesc, nullptr, &visibleIdsBuffer);
+    assert(SUCCEEDED(hr));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC visibleIdsSRVDesc = {};
+    visibleIdsSRVDesc.Format = DXGI_FORMAT_UNKNOWN;
+    visibleIdsSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    visibleIdsSRVDesc.Buffer.FirstElement = 0;
+    visibleIdsSRVDesc.Buffer.NumElements = MAX_CUBE_INSTANCES;
+    hr = device->CreateShaderResourceView(visibleIdsBuffer, &visibleIdsSRVDesc, &visibleIdsSRV);
+    assert(SUCCEEDED(hr));
+
+    D3D11_UNORDERED_ACCESS_VIEW_DESC visibleIdsUAVDesc = {};
+    visibleIdsUAVDesc.Format = DXGI_FORMAT_UNKNOWN;
+    visibleIdsUAVDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    visibleIdsUAVDesc.Buffer.FirstElement = 0;
+    visibleIdsUAVDesc.Buffer.NumElements = MAX_CUBE_INSTANCES;
+    hr = device->CreateUnorderedAccessView(visibleIdsBuffer, &visibleIdsUAVDesc, &visibleIdsUAV);
+    assert(SUCCEEDED(hr));
+
+    D3D11_BUFFER_DESC argsUavDesc = {};
+    argsUavDesc.ByteWidth = sizeof(UINT) * 5;
+    argsUavDesc.Usage = D3D11_USAGE_DEFAULT;
+    argsUavDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    argsUavDesc.CPUAccessFlags = 0;
+    argsUavDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    argsUavDesc.StructureByteStride = sizeof(UINT);
+    hr = device->CreateBuffer(&argsUavDesc, nullptr, &indirectArgsUAVBuffer);
+    assert(SUCCEEDED(hr));
+
+    D3D11_UNORDERED_ACCESS_VIEW_DESC argsUAVDesc = {};
+    argsUAVDesc.Format = DXGI_FORMAT_UNKNOWN;
+    argsUAVDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    argsUAVDesc.Buffer.FirstElement = 0;
+    argsUAVDesc.Buffer.NumElements = 5;
+    hr = device->CreateUnorderedAccessView(indirectArgsUAVBuffer, &argsUAVDesc, &indirectArgsUAV);
+    assert(SUCCEEDED(hr));
+
+    D3D11_BUFFER_DESC argsIndirectDesc = {};
+    argsIndirectDesc.ByteWidth = sizeof(UINT) * 5;
+    argsIndirectDesc.Usage = D3D11_USAGE_DEFAULT;
+    argsIndirectDesc.BindFlags = 0;
+    argsIndirectDesc.CPUAccessFlags = 0;
+    argsIndirectDesc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+    hr = device->CreateBuffer(&argsIndirectDesc, nullptr, &indirectArgsBuffer);
+    assert(SUCCEEDED(hr));
+
+    InitPipelineStatsQueries(device);
 
     const std::wstring exeDir = GetExecutableDirectoryW();
     const std::vector<std::wstring> colorCandidates0 = {
@@ -593,18 +692,31 @@ WorldAABB ComputeCubeAabbWS(const DirectX::XMMATRIX& model) {
     return box;
 }
 
-bool IsAabbVisible(const WorldAABB& box, const DirectX::BoundingFrustum& frustum) {
+void NormalizePlane(DirectX::XMFLOAT4& p) {
+    const float len = sqrtf(p.x * p.x + p.y * p.y + p.z * p.z);
+    if (len > 1e-6f) {
+        p.x /= len;
+        p.y /= len;
+        p.z /= len;
+        p.w /= len;
+    }
+}
+
+void ExtractFrustumPlanes(const DirectX::XMMATRIX& viewProj, DirectX::XMFLOAT4 outPlanes[6]) {
     using namespace DirectX;
-    const XMFLOAT3 center(
-        0.5f * (box.minP.x + box.maxP.x),
-        0.5f * (box.minP.y + box.maxP.y),
-        0.5f * (box.minP.z + box.maxP.z));
-    const XMFLOAT3 extents(
-        0.5f * (box.maxP.x - box.minP.x),
-        0.5f * (box.maxP.y - box.minP.y),
-        0.5f * (box.maxP.z - box.minP.z));
-    const BoundingBox bb(center, extents);
-    return frustum.Contains(bb) != DirectX::DISJOINT;
+    XMFLOAT4X4 m = {};
+    XMStoreFloat4x4(&m, viewProj);
+
+    outPlanes[0] = XMFLOAT4(m._14 + m._11, m._24 + m._21, m._34 + m._31, m._44 + m._41);
+    outPlanes[1] = XMFLOAT4(m._14 - m._11, m._24 - m._21, m._34 - m._31, m._44 - m._41);
+    outPlanes[2] = XMFLOAT4(m._14 + m._12, m._24 + m._22, m._34 + m._32, m._44 + m._42);
+    outPlanes[3] = XMFLOAT4(m._14 - m._12, m._24 - m._22, m._34 - m._32, m._44 - m._42);
+    outPlanes[4] = XMFLOAT4(m._13, m._23, m._33, m._43);
+    outPlanes[5] = XMFLOAT4(m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43);
+
+    for (int i = 0; i < 6; ++i) {
+        NormalizePlane(outPlanes[i]);
+    }
 }
 
 }
@@ -628,7 +740,7 @@ void CubeComponent::RenderWithModel(ID3D11DeviceContext* context, const DirectX:
 }
 
 void CubeComponent::RenderInstanced(ID3D11DeviceContext* context, const CubeInstanceData* instances, UINT instanceCount, float aspectRatio, float camPitch, float camYaw) {
-    if (!isInitialized || !vertexShader || !pixelShader || !inputLayout || !instances || instanceCount == 0) return;
+    if (!isInitialized || !vertexShader || !pixelShader || !cullComputeShader || !inputLayout || !instances || instanceCount == 0) return;
     const UINT totalCount = (std::min)(instanceCount, (UINT)MAX_CUBE_INSTANCES);
 
     UINT stride = sizeof(CubeVertex);
@@ -656,42 +768,34 @@ void CubeComponent::RenderInstanced(ID3D11DeviceContext* context, const CubeInst
     const DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PI / 3.0f, aspectRatio, nearZ, farZ);
     const DirectX::XMMATRIX vp = DirectX::XMMatrixMultiply(v, p);
 
-    DirectX::BoundingFrustum viewFrustum = {};
-    DirectX::BoundingFrustum::CreateFromMatrix(viewFrustum, p);
-    DirectX::BoundingFrustum worldFrustum = {};
-    const DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, v);
-    viewFrustum.Transform(worldFrustum, invView);
-
     CubeGeomBufferInst geomInst = {};
-    CubeGeomBufferInstVis visInst = {};
-    UINT visibleCount = 0;
+    CubeCullBuffer cullData = {};
+    ExtractFrustumPlanes(vp, cullData.frustumPlanes);
+    cullData.objectCount = totalCount;
+
     for (UINT i = 0; i < totalCount; ++i) {
         const WorldAABB aabb = ComputeCubeAabbWS(instances[i].model);
-        if (!IsAabbVisible(aabb, worldFrustum)) {
-            continue;
-        }
+        cullData.bbMin[i] = DirectX::XMFLOAT4(aabb.minP.x, aabb.minP.y, aabb.minP.z, 0.0f);
+        cullData.bbMax[i] = DirectX::XMFLOAT4(aabb.maxP.x, aabb.maxP.y, aabb.maxP.z, 0.0f);
 
-        visInst.ids[visibleCount] = DirectX::XMUINT4(i, 0, 0, 0);
         CubeGeomBuffer& geom = geomInst.geomBuffer[i];
         geom.m = instances[i].model;
         geom.normalMatrix = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, instances[i].model));
         const bool useNormalMap = instances[i].useNormalMap && frameLightingParams.enableNormalMapping && hasNormalTextureFromFile;
         const float textureId = (float)((instances[i].textureId > 1u) ? 1u : instances[i].textureId);
         geom.shineSpeedTexIdNM = DirectX::XMFLOAT4((std::max)(instances[i].shininess, 1.0f), 0.0f, textureId, useNormalMap ? 1.0f : 0.0f);
-        ++visibleCount;
     }
 
-    lastVisibleInstanceCount = visibleCount;
-    if (visibleCount == 0) return;
+    lastVisibleInstanceCount = 0;
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (SUCCEEDED(context->Map(geomInstBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         memcpy(mapped.pData, &geomInst, sizeof(geomInst));
         context->Unmap(geomInstBuffer, 0);
     }
-    if (SUCCEEDED(context->Map(geomInstVisBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, &visInst, sizeof(visInst));
-        context->Unmap(geomInstVisBuffer, 0);
+    if (SUCCEEDED(context->Map(cullBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &cullData, sizeof(cullData));
+        context->Unmap(cullBuffer, 0);
     }
     if (SUCCEEDED(context->Map(vpBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         CubeSceneBuffer* sb = (CubeSceneBuffer*)mapped.pData;
@@ -705,15 +809,50 @@ void CubeComponent::RenderInstanced(ID3D11DeviceContext* context, const CubeInst
         context->Unmap(vpBuffer, 0);
     }
 
-    ID3D11Buffer* cbs[] = { geomInstBuffer, vpBuffer, geomInstVisBuffer };
-    context->VSSetConstantBuffers(0, 3, cbs);
-    context->PSSetConstantBuffers(0, 3, cbs);
+    ID3D11Buffer* drawArgsCb = nullptr;
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    context->VSSetShaderResources(2, 1, &nullSrv);
+    context->PSSetShaderResources(2, 1, &nullSrv);
 
-    ID3D11ShaderResourceView* srvs[] = { colorTextureArraySRV, normalTextureSRV };
-    context->PSSetShaderResources(0, 2, srvs);
+    const UINT drawArgs[5] = { 36u, 0u, 0u, 0u, 0u };
+    context->UpdateSubresource(indirectArgsUAVBuffer, 0, nullptr, drawArgs, 0, 0);
+
+    ID3D11Buffer* cullCb[] = { cullBuffer };
+    context->CSSetConstantBuffers(0, 1, cullCb);
+    ID3D11UnorderedAccessView* cullUavs[] = { indirectArgsUAV, visibleIdsUAV };
+    UINT initialCounts[] = { 0, 0 };
+    context->CSSetUnorderedAccessViews(0, 2, cullUavs, initialCounts);
+    context->CSSetShader(cullComputeShader, nullptr, 0);
+    context->Dispatch((totalCount + 63u) / 64u, 1, 1);
+    context->CSSetShader(nullptr, nullptr, 0);
+
+    ID3D11UnorderedAccessView* nullUAVs[2] = { nullptr, nullptr };
+    context->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
+    context->CSSetConstantBuffers(0, 1, &drawArgsCb);
+
+    context->CopyResource(indirectArgsBuffer, indirectArgsUAVBuffer);
+
+    ID3D11Buffer* cbs[] = { geomInstBuffer, vpBuffer };
+    context->VSSetConstantBuffers(0, 2, cbs);
+    context->PSSetConstantBuffers(0, 2, cbs);
+
+    ID3D11ShaderResourceView* srvs[] = { colorTextureArraySRV, normalTextureSRV, visibleIdsSRV };
+    context->VSSetShaderResources(2, 1, &visibleIdsSRV);
+    context->PSSetShaderResources(0, 3, srvs);
     context->PSSetSamplers(0, 1, &colorSampler);
 
-    context->DrawIndexedInstanced(36, visibleCount, 0, 0, 0);
+    const UINT queryIndex = (UINT)(curFrame % PIPELINE_QUERY_COUNT);
+    ID3D11Query* pipelineQuery = pipelineStatsQueries[queryIndex];
+    context->Begin(pipelineQuery);
+    context->DrawIndexedInstancedIndirect(indirectArgsBuffer, 0);
+    context->End(pipelineQuery);
+
+    ++curFrame;
+    ReadPipelineStatsQueries(context);
+    lastVisibleInstanceCount = gpuVisibleInstances;
+
+    context->VSSetShaderResources(2, 1, &nullSrv);
+    context->PSSetShaderResources(2, 1, &nullSrv);
 }
 
 void CubeComponent::Cleanup() {
@@ -724,11 +863,21 @@ void CubeComponent::Cleanup() {
     SAFE_RELEASE(colorTextureArraySRV);
     SAFE_RELEASE(colorTextureArray);
 
+    for (UINT i = 0; i < PIPELINE_QUERY_COUNT; ++i) {
+        SAFE_RELEASE(pipelineStatsQueries[i]);
+    }
+    SAFE_RELEASE(indirectArgsBuffer);
+    SAFE_RELEASE(indirectArgsUAV);
+    SAFE_RELEASE(indirectArgsUAVBuffer);
+    SAFE_RELEASE(visibleIdsUAV);
+    SAFE_RELEASE(visibleIdsSRV);
+    SAFE_RELEASE(visibleIdsBuffer);
+    SAFE_RELEASE(cullBuffer);
     SAFE_RELEASE(geomInstBuffer);
-    SAFE_RELEASE(geomInstVisBuffer);
     SAFE_RELEASE(vpBuffer);
     SAFE_RELEASE(indexBuffer);
     SAFE_RELEASE(vertexBuffer);
+    SAFE_RELEASE(cullComputeShader);
     SAFE_RELEASE(vertexShader);
     SAFE_RELEASE(pixelShader);
     SAFE_RELEASE(inputLayout);
