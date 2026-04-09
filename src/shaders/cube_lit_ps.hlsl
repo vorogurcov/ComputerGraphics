@@ -19,12 +19,9 @@ cbuffer SceneBuffer : register(b1) {
     PointLight lights[MAX_POINT_LIGHTS];
 };
 
-cbuffer GeomBufferInstVis : register(b2) {
-    uint4 ids[100];
-};
-
 Texture2DArray colorTextureArray : register(t0);
 Texture2D normalTexture : register(t1);
+StructuredBuffer<uint> visibleIds : register(t2);
 SamplerState colorSampler : register(s0);
 
 struct PS_INPUT {
@@ -37,7 +34,7 @@ struct PS_INPUT {
 };
 
 float4 main(PS_INPUT input) : SV_TARGET {
-    uint realIdx = ids[input.InstanceId].x;
+    uint realIdx = visibleIds[input.InstanceId];
     uint texId = (uint)geomBuffer[realIdx].shineSpeedTexIdNM.z;
     float shininess = geomBuffer[realIdx].shineSpeedTexIdNM.x;
     bool useNormalMap = geomBuffer[realIdx].shineSpeedTexIdNM.w > 0.5f;
